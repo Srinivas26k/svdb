@@ -89,29 +89,3 @@ SrvDB is open-source software licensed under the **AGPL v3.0**.
 * **Commercial Use**: If you wish to embed SrvDB in a proprietary, closed-source application without releasing your source code, you must purchase a Commercial License.
 
 Contact `[srinivasvarma764@gmail.com]` for commercial licensing inquiries.
-
-```
-
-
-### 5. Push to GitHub
-
-Now, execute these commands to push your professional repo:
-
-```bash
-# 1. Initialize Git (if not done)
-git init
-
-# 2. Add the new files
-git add README.md LICENSE CONTRIBUTING.md BENCHMARK.md
-
-# 3. Commit
-git commit -m "docs: release preparation v0.1.6"
-
-# 4. Rename branch to main
-git branch -M main
-
-# 5. Connect to your repo (Change URL to yours)
-git remote add origin https://github.com/Srinivas26k/srvdb.git
-
-# 6. Push
-git push -u origin main
