@@ -32,8 +32,8 @@ impl VectorStorage {
             .open(&file_path)
             .context("Failed to open vectors.bin")?;
 
-        // Wrap file in BufWriter with 8KB buffer (good balance for ingestion speed)
-        let mut writer = BufWriter::with_capacity(8192, file);
+        // Wrap file in BufWriter with 1MB buffer for maximum ingestion speed
+        let mut writer = BufWriter::with_capacity(1_048_576, file);
 
         if !exists {
             // Initialize new file with header
@@ -170,6 +170,17 @@ impl VectorStorage {
         }
         
         Ok(())
+    }
+}
+
+// CRITICAL: Implement Drop to ensure buffer is flushed when VectorStorage is dropped
+// This prevents data loss when Python objects are garbage collected
+impl Drop for VectorStorage {
+    fn drop(&mut self) {
+        // Attempt to flush the buffer on drop
+        // Ignore errors in drop() as per Rust conventions
+        let _ = self.writer.flush();
+        let _ = self.writer.get_ref().sync_all();
     }
 }
 
