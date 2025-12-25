@@ -7,7 +7,9 @@ use memmap2::{MmapMut, MmapOptions};
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use crate::types::{QuantizedVector, VectorHeader};
+use crate::types::{EmbeddedVector, VectorHeader};
+
+const VECTOR_SIZE: usize = 6144; // 1536 floats * 4 bytes = 6KB per vector
 
 pub struct VectorStorage {
     #[allow(dead_code)]
@@ -72,12 +74,12 @@ impl VectorStorage {
         })
     }
 
-    /// Append a quantized vector to storage
-    pub fn append(&mut self, vector: &QuantizedVector) -> Result<u64> {
+    /// Append a full precision f32 vector to storage
+    pub fn append(&mut self, vector: &EmbeddedVector) -> Result<u64> {
         let id = self.count;
 
-        // Calculate new file size
-        let new_size = VectorHeader::SIZE + ((self.count as usize + 1) * 192);
+        // Calculate new file size (header + all vectors)
+        let new_size = VectorHeader::SIZE + ((self.count as usize + 1) * VECTOR_SIZE);
 
         // Resize file
         self.file.set_len(new_size as u64)?;
@@ -86,9 +88,15 @@ impl VectorStorage {
         drop(self.mmap.take()); // Unmap first
         let mut mmap = unsafe { MmapOptions::new().map_mut(&self.file)? };
 
-        // Write vector data
-        let offset = VectorHeader::SIZE + (self.count as usize * 192);
-        mmap[offset..offset + 192].copy_from_slice(vector);
+        // Write vector data as raw bytes
+        let offset = VectorHeader::SIZE + (self.count as usize * VECTOR_SIZE);
+        let vector_bytes = unsafe {
+            std::slice::from_raw_parts(
+                vector.as_ptr() as *const u8,
+                VECTOR_SIZE,
+            )
+        };
+        mmap[offset..offset + VECTOR_SIZE].copy_from_slice(vector_bytes);
 
         // Update count in header
         self.count += 1;
@@ -111,18 +119,18 @@ impl VectorStorage {
     }
 
     /// Get a reference to a specific vector by index
-    pub fn get(&self, index: u64) -> Option<&QuantizedVector> {
+    pub fn get(&self, index: u64) -> Option<&EmbeddedVector> {
         if index >= self.count {
             return None;
         }
 
         let mmap = self.mmap.as_ref()?;
-        let offset = VectorHeader::SIZE + (index as usize * 192);
+        let offset = VectorHeader::SIZE + (index as usize * VECTOR_SIZE);
         
-        if offset + 192 <= mmap.len() {
-            let slice = &mmap[offset..offset + 192];
-            // Safe because we know the layout
-            Some(unsafe { &*(slice.as_ptr() as *const QuantizedVector) })
+        if offset + VECTOR_SIZE <= mmap.len() {
+            let slice = &mmap[offset..offset + VECTOR_SIZE];
+            // Safe because we know the layout and alignment
+            Some(unsafe { &*(slice.as_ptr() as *const EmbeddedVector) })
         } else {
             None
         }
@@ -153,7 +161,7 @@ pub struct VectorIterator<'a> {
 }
 
 impl<'a> Iterator for VectorIterator<'a> {
-    type Item = (u64, &'a QuantizedVector);
+    type Item = (u64, &'a EmbeddedVector);
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.index >= self.storage.count {
@@ -185,7 +193,8 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let mut storage = VectorStorage::new(temp_dir.path().to_str().unwrap()).unwrap();
 
-        let vector = [0xFF; 192];
+        // Create a test f32 vector
+        let vector = [0.5f32; 1536];
         let id = storage.append(&vector).unwrap();
 
         assert_eq!(id, 0);
@@ -193,5 +202,27 @@ mod tests {
 
         let retrieved = storage.get(id).unwrap();
         assert_eq!(retrieved, &vector);
+    }
+
+    #[test]
+    fn test_multiple_vectors() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut storage = VectorStorage::new(temp_dir.path().to_str().unwrap()).unwrap();
+
+        for i in 0..10 {
+            let mut vector = [0.0f32; 1536];
+            vector[0] = i as f32;
+            storage.append(&vector).unwrap();
+        }
+
+        assert_eq!(storage.count(), 10);
+
+        // Verify first vector
+        let vec0 = storage.get(0).unwrap();
+        assert_eq!(vec0[0], 0.0);
+
+        // Verify last vector
+        let vec9 = storage.get(9).unwrap();
+        assert_eq!(vec9[0], 9.0);
     }
 }

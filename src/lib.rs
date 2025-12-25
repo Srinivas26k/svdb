@@ -36,7 +36,6 @@ pub mod types;
 pub use types::{Vector, SearchResult};
 
 // Core modules
-mod quantize;
 mod storage;
 mod search;
 mod metadata;
@@ -146,11 +145,12 @@ impl VectorEngine for SvDB {
             anyhow::bail!("Vector must have exactly 1536 dimensions");
         }
 
-        // Quantize vector to binary
-        let quantized = quantize::quantize_vector(&vec.data);
+        // Convert to embedded vector array
+        let embedded = types::to_embedded_vector(&vec.data)
+            .map_err(|e| anyhow::anyhow!(e))?;
 
         // Append to vector storage
-        let id = self.vector_storage.append(&quantized)?;
+        let id = self.vector_storage.append(&embedded)?;
 
         // Store metadata
         self.metadata_store.set(id, meta)?;
@@ -166,13 +166,14 @@ impl VectorEngine for SvDB {
             anyhow::bail!("Query vector must have exactly 1536 dimensions");
         }
 
-        // Quantize query vector
-        let quantized_query = quantize::quantize_vector(&query.data);
+        // Convert to embedded vector array
+        let embedded_query = types::to_embedded_vector(&query.data)
+            .map_err(|e| anyhow::anyhow!(e))?;
 
-        // Search using Hamming distance
-        let results = search::search_hamming(
+        // Search using cosine similarity
+        let results = search::search_cosine(
             &self.vector_storage,
-            &quantized_query,
+            &embedded_query,
             k,
         )?;
 

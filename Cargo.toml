@@ -1,7 +1,7 @@
 [package]
 name = "srvdb"
-version = "0.1.0"
-edition = "2021"
+version = "0.1.2"
+edition = "2025"
 authors = ["Srinivas Nampalli"]
 description = "Zero-Gravity Embedded Vector Database - Offline-first, RAM-efficient vector search"
 license = "MIT OR Apache-2.0"
@@ -19,9 +19,6 @@ memmap2 = "0.9"
 
 # Parallel processing
 rayon = "1.10"
-
-# Bit manipulation for binary quantization
-bitvec = "1.0"
 
 # Embedded key-value store for metadata
 redb = "2.2"

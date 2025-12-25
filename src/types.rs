@@ -1,4 +1,4 @@
-//! Core type definitions for SvDB
+//! Core type definitions for SrvDB
 
 /// Represents a vector with floating-point data
 #[derive(Debug, Clone)]
@@ -37,8 +37,19 @@ impl SearchResult {
     }
 }
 
-/// Binary quantized vector (192 bytes for 1536 dimensions)
-pub type QuantizedVector = [u8; 192];
+/// Full precision embedded vector (6,144 bytes for 1536 dimensions)
+/// Stored as raw f32 values for accurate similarity computation
+pub type EmbeddedVector = [f32; 1536];
+
+/// Convert a Vec<f32> to fixed-size array
+pub fn to_embedded_vector(data: &[f32]) -> Result<EmbeddedVector, String> {
+    if data.len() != 1536 {
+        return Err(format!("Expected 1536 dimensions, got {}", data.len()));
+    }
+    let mut array = [0.0f32; 1536];
+    array.copy_from_slice(data);
+    Ok(array)
+}
 
 /// Internal vector header stored in vectors.bin
 #[derive(Debug, Clone, Copy)]
@@ -56,7 +67,7 @@ pub struct VectorHeader {
 
 impl VectorHeader {
     pub const MAGIC: u32 = 0x53764442; // "SvDB" in hex
-    pub const VERSION: u16 = 1;
+    pub const VERSION: u16 = 2; // Version 2: Full precision f32
     pub const SIZE: usize = std::mem::size_of::<VectorHeader>();
 
     pub fn new() -> Self {
