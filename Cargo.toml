@@ -1,0 +1,55 @@
+[package]
+name = "svdb"
+version = "1.0.0"
+edition = "2021"
+authors = ["SvDB Contributors"]
+description = "Zero-Gravity Embedded Vector Database - Offline-first, RAM-efficient vector search"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/svdb"
+keywords = ["vector", "database", "embedding", "search", "quantization"]
+categories = ["database", "embedded"]
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[dependencies]
+# Memory mapping for zero-copy vector storage
+memmap2 = "0.9"
+
+# Parallel processing
+rayon = "1.10"
+
+# Bit manipulation for binary quantization
+bitvec = "1.0"
+
+# Embedded key-value store for metadata
+redb = "2.2"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "2.0"
+
+# Serialization (zero-copy preferred)
+rkyv = "0.8"
+
+# Optional: SIMD support
+wide = { version = "0.7", optional = true }
+
+[dev-dependencies]
+criterion = "0.5"
+rand = "0.8"
+tempfile = "3.13"
+
+[features]
+default = ["simd"]
+simd = ["wide"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
+# [[bench]]
+# name = "search_benchmark"
+# harness = false
