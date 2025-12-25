@@ -1,6 +1,6 @@
 [package]
 name = "srvdb"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 authors = ["Srinivas Nampalli"]
 description = "Zero-Gravity Embedded Vector Database - Offline-first, RAM-efficient vector search"
@@ -29,6 +29,7 @@ thiserror = "2.0"
 
 # Serialization (zero-copy preferred)
 rkyv = "0.8"
+serde_json = "1.0"
 
 # SIMD-accelerated vector operations
 simsimd = "=6.0"

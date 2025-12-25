@@ -199,6 +199,9 @@ def test_data_integrity():
     
     print(f"  Wrote:    {num_vectors} vectors")
     
+    # IMPORTANT: Delete db object to close the database before reopening
+    del db
+    
     # Phase 2: Reload and verify
     print("Phase 2: Reloading database...")
     db2 = srvdb.SvDBPython(DB_PATH)

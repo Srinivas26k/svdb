@@ -150,6 +150,9 @@ mod tests {
         
         storage.append(&vec1).unwrap();
         storage.append(&vec2).unwrap();
+        
+        // Flush to make data visible in mmap for search
+        storage.flush().unwrap();
 
         // Search for vec1
         let results = search_cosine(&storage, &vec1, 2).unwrap();
@@ -191,6 +194,9 @@ mod tests {
         // Vector 3: No match
         let vec3 = [0.5f32; 1536];
         storage.append(&vec3).unwrap();
+        
+        // Flush to make data visible in mmap for search
+        storage.flush().unwrap();
 
         let results = search_cosine(&storage, &query, 3).unwrap();
         

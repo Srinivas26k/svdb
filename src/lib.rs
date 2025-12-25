@@ -202,6 +202,13 @@ impl VectorEngine for SvDB {
     }
 }
 
+impl SvDB {
+    /// Get the number of vectors stored
+    pub fn count(&self) -> u64 {
+        self.count
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,6 +234,9 @@ mod tests {
         // Add vector
         let id = db.add(&vec, r#"{"test": "data"}"#).unwrap();
         assert_eq!(id, 0);
+        
+        // Persist to flush buffered data before search
+        db.persist().unwrap();
 
         // Search for the same vector
         let results = db.search(&vec, 1).unwrap();

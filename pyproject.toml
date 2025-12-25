@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "srvdb"
-version = "0.1.4"
+version = "0.1.5"
 description = "Zero-Gravity Embedded Vector Database - Offline-first, RAM-efficient vector search"
 readme = "README.md"
 requires-python = ">=3.8"

@@ -5,6 +5,7 @@
 use pyo3::prelude::*;
 use pyo3::exceptions::PyValueError;
 use std::collections::HashMap;
+use serde_json;
 use crate::{SvDB, Vector, VectorEngine};
 
 /// Python wrapper for SvDB with ChromaDB-style API
@@ -32,11 +33,30 @@ impl SvDBPython {
         let db = SvDB::new(&path)
             .map_err(|e| PyValueError::new_err(format!("Failed to initialize database: {}", e)))?;
         
+        let mut id_map = HashMap::new();
+        let mut reverse_id_map = HashMap::new();
+        let mut next_internal_id = 0;
+        
+        // Rebuild ID mappings from existing metadata (if database exists)
+        let count = db.count();
+        for internal_id in 0..count {
+            if let Ok(Some(metadata_json)) = db.get_metadata(internal_id) {
+                // Parse metadata to extract string ID
+                if let Ok(metadata) = serde_json::from_str::<serde_json::Value>(&metadata_json) {
+                    if let Some(string_id) = metadata.get("__id__").and_then(|v| v.as_str()) {
+                        id_map.insert(string_id.to_string(), internal_id);
+                        reverse_id_map.insert(internal_id, string_id.to_string());
+                        next_internal_id = next_internal_id.max(internal_id + 1);
+                    }
+                }
+            }
+        }
+        
         Ok(Self {
             db,
-            id_map: HashMap::new(),
-            reverse_id_map: HashMap::new(),
-            next_internal_id: 0,
+            id_map,
+            reverse_id_map,
+            next_internal_id,
         })
     }
 
@@ -89,9 +109,21 @@ impl SvDBPython {
 
             // Create vector and add to database
             let vec = Vector::new(embedding.clone());
-            let metadata = &metadatas[i];
+            let user_metadata = &metadatas[i];
+            
+            // Inject string ID into metadata for persistence
+            let mut metadata_obj: serde_json::Value = serde_json::from_str(user_metadata)
+                .unwrap_or(serde_json::json!({}));
+            
+            // Add __id__ field (reserved for internal use)
+            if let Some(obj) = metadata_obj.as_object_mut() {
+                obj.insert("__id__".to_string(), serde_json::Value::String(id.clone()));
+            }
+            
+            let metadata_with_id = serde_json::to_string(&metadata_obj)
+                .map_err(|e| PyValueError::new_err(format!("Failed to serialize metadata: {}", e)))?;
 
-            let internal_id = self.db.add(&vec, metadata)
+            let internal_id = self.db.add(&vec, &metadata_with_id)
                 .map_err(|e| PyValueError::new_err(format!("Failed to add vector: {}", e)))?;
 
             // Store ID mappings
@@ -164,7 +196,8 @@ impl SvDBPython {
     /// Returns:
     ///     int: Number of vectors stored
     fn count(&self) -> PyResult<usize> {
-        Ok(self.id_map.len())
+        // Use actual DB count, not ID map (which is empty on reopen)
+        Ok(self.db.count() as usize)
     }
 
     /// Persist all changes to disk
