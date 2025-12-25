@@ -3,8 +3,8 @@ requires = ["maturin>=1.0"]
 build-backend = "maturin"
 
 [project]
-name = "svdb"
-version = "1.0.0"
+name = "srvdb"
+version = "0.1.0"
 description = "Zero-Gravity Embedded Vector Database - Offline-first, RAM-efficient vector search"
 readme = "README.md"
 requires-python = ">=3.8"

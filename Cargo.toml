@@ -1,16 +1,16 @@
 [package]
-name = "svdb"
-version = "1.0.0"
+name = "srvdb"
+version = "0.1.0"
 edition = "2021"
-authors = ["SvDB Contributors"]
+authors = ["Srinivas Nampalli"]
 description = "Zero-Gravity Embedded Vector Database - Offline-first, RAM-efficient vector search"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/yourusername/svdb"
+repository = "https://github.com/Srinivas26k/svdb"
 keywords = ["vector", "database", "embedding", "search", "quantization"]
 categories = ["database", "embedded"]
 
 [lib]
-name = "svdb"
+name = "srvdb"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]

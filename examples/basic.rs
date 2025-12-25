@@ -1,6 +1,6 @@
 //! Basic example demonstrating SvDB usage
 
-use svdb::{SvDB, Vector, VectorEngine};
+use srvdb::{SvDB, Vector, VectorEngine};
 use anyhow::Result;
 
 fn main() -> Result<()> {

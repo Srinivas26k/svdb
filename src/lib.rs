@@ -12,7 +12,7 @@
 //!
 //! ## Example Usage
 //! ```rust,no_run
-//! use svdb::{VectorEngine, SvDB, Vector};
+//! use srvdb::{VectorEngine, SvDB, Vector};
 //!
 //! # fn main() -> anyhow::Result<()> {
 //! // Initialize database

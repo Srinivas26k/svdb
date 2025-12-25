@@ -213,7 +213,7 @@ impl SvDBPython {
 
 /// Python module initialization
 #[pymodule]
-fn svdb(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn srvdb(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SvDBPython>()?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("__doc__", "SvDB - Zero-Gravity Embedded Vector Database")?;

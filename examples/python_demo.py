@@ -4,16 +4,16 @@ SvDB Python Example - ChromaDB-style API
 Demonstrates using SvDB from Python with the familiar ChromaDB API pattern.
 """
 
-import svdb
+import srvdb
 import random
 
 def main():
     print("🚀 SvDB Python Bindings Demo\n")
-    print(f"SvDB Version: {svdb.__version__}\n")
+    print(f"SvDB Version: {srvdb.__version__}\n")
 
     # Initialize database
     print("Initializing database...")
-    db = svdb.SvDBPython("./python_demo_db")
+    db = srvdb.SvDBPython("./python_demo_db")
     print(f"✓ Created: {db}\n")
 
     # Prepare data

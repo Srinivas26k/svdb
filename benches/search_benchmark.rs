@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use svdb::{SvDB, VectorEngine, Vector};
+use srvdb::{SvDB, VectorEngine, Vector};
 use rand::Rng;
 
 const DIM: usize = 1536;
