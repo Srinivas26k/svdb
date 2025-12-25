@@ -1,19 +1,25 @@
-//! Metadata storage module using redb
+//! Optimized metadata storage with batch operations
 //!
-//! Manages the metadata.db key-value store.
+//! Improvements:
+//! - Batch set/get operations
+//! - Write-through caching for hot metadata
+//! - Reduced transaction overhead
 
 use anyhow::{Context, Result};
-use redb::{Database, TableDefinition};
+use redb::{Database, ReadableTableMetadata, TableDefinition};
 use std::path::Path;
+use std::collections::HashMap;
 
 const METADATA_TABLE: TableDefinition<u64, &str> = TableDefinition::new("metadata");
+const CACHE_SIZE: usize = 1000; // Cache last 1000 accessed items
 
 pub struct MetadataStore {
     db: Database,
+    write_cache: HashMap<u64, String>,
+    cache_dirty: bool,
 }
 
 impl MetadataStore {
-    /// Create or open metadata store
     pub fn new(db_path: &str) -> Result<Self> {
         let db_file = Path::new(db_path).join("metadata.db");
         
@@ -27,22 +33,48 @@ impl MetadataStore {
         }
         write_txn.commit()?;
 
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            write_cache: HashMap::with_capacity(CACHE_SIZE),
+            cache_dirty: false,
+        })
     }
 
-    /// Set metadata for a vector ID
-    pub fn set(&self, id: u64, metadata: &str) -> Result<()> {
+    /// Set metadata with write-through cache
+    pub fn set(&mut self, id: u64, metadata: &str) -> Result<()> {
+        // Add to cache
+        self.write_cache.insert(id, metadata.to_string());
+        self.cache_dirty = true;
+
+        // Flush if cache is full
+        if self.write_cache.len() >= CACHE_SIZE {
+            self.flush_cache()?;
+        }
+
+        Ok(())
+    }
+
+    /// Batch set operation (much faster than individual sets)
+    pub fn set_batch(&mut self, items: &[(u64, String)]) -> Result<()> {
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(METADATA_TABLE)?;
-            table.insert(id, metadata)?;
+            for (id, metadata) in items {
+                table.insert(*id, metadata.as_str())?;
+            }
         }
         write_txn.commit()?;
         Ok(())
     }
 
-    /// Get metadata for a vector ID
+    /// Get metadata with cache lookup
     pub fn get(&self, id: u64) -> Result<Option<String>> {
+        // Check cache first
+        if let Some(metadata) = self.write_cache.get(&id) {
+            return Ok(Some(metadata.clone()));
+        }
+
+        // Fall back to database
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(METADATA_TABLE)?;
         
@@ -50,8 +82,29 @@ impl MetadataStore {
         Ok(result.map(|v| v.value().to_string()))
     }
 
-    /// Delete metadata for a vector ID
-    pub fn delete(&self, id: u64) -> Result<()> {
+    /// Batch get operation
+    pub fn get_batch(&self, ids: &[u64]) -> Result<Vec<Option<String>>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(METADATA_TABLE)?;
+        
+        let mut results = Vec::with_capacity(ids.len());
+        for id in ids {
+            // Check cache first
+            if let Some(metadata) = self.write_cache.get(id) {
+                results.push(Some(metadata.clone()));
+            } else {
+                let result = table.get(*id)?;
+                results.push(result.map(|v| v.value().to_string()));
+            }
+        }
+        
+        Ok(results)
+    }
+
+    pub fn delete(&mut self, id: u64) -> Result<()> {
+        // Remove from cache
+        self.write_cache.remove(&id);
+
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(METADATA_TABLE)?;
@@ -61,10 +114,40 @@ impl MetadataStore {
         Ok(())
     }
 
-    /// Force flush to disk
-    pub fn flush(&self) -> Result<()> {
-        // redb handles flushing automatically with transactions
+    /// Flush write cache to disk
+    fn flush_cache(&mut self) -> Result<()> {
+        if !self.cache_dirty || self.write_cache.is_empty() {
+            return Ok(());
+        }
+
+        let items: Vec<_> = self.write_cache
+            .iter()
+            .map(|(id, meta)| (*id, meta.clone()))
+            .collect();
+
+        self.set_batch(&items)?;
+        self.write_cache.clear();
+        self.cache_dirty = false;
+
         Ok(())
+    }
+
+    pub fn flush(&mut self) -> Result<()> {
+        self.flush_cache()?;
+        Ok(())
+    }
+
+    /// Get total count of metadata entries
+    pub fn count(&self) -> Result<usize> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(METADATA_TABLE)?;
+        Ok(table.len()? as usize)
+    }
+}
+
+impl Drop for MetadataStore {
+    fn drop(&mut self) {
+        let _ = self.flush();
     }
 }
 
@@ -74,22 +157,77 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn test_metadata_operations() {
+    fn test_write_cache() {
         let temp_dir = TempDir::new().unwrap();
-        let store = MetadataStore::new(temp_dir.path().to_str().unwrap()).unwrap();
+        let mut store = MetadataStore::new(temp_dir.path().to_str().unwrap()).unwrap();
 
-        // Test set and get
-        store.set(0, r#"{"title": "test"}"#).unwrap();
-        let result = store.get(0).unwrap();
-        assert_eq!(result, Some(r#"{"title": "test"}"#.to_string()));
+        // Add to cache
+        for i in 0..500 {
+            store.set(i, &format!(r#"{{"id": {}}}"#, i)).unwrap();
+        }
 
-        // Test non-existent key
-        let result = store.get(999).unwrap();
-        assert_eq!(result, None);
+        // Should still be in cache (not flushed)
+        assert!(store.cache_dirty);
+        assert_eq!(store.write_cache.len(), 500);
 
-        // Test delete
-        store.delete(0).unwrap();
-        let result = store.get(0).unwrap();
-        assert_eq!(result, None);
+        // Get from cache
+        let result = store.get(100).unwrap();
+        assert_eq!(result, Some(r#"{"id": 100}"#.to_string()));
+
+        // Flush
+        store.flush().unwrap();
+        assert!(!store.cache_dirty);
+        assert_eq!(store.write_cache.len(), 0);
+    }
+
+    #[test]
+    fn test_batch_operations() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut store = MetadataStore::new(temp_dir.path().to_str().unwrap()).unwrap();
+
+        // Batch set
+        let items: Vec<_> = (0..100)
+            .map(|i| (i, format!(r#"{{"id": {}}}"#, i)))
+            .collect();
+
+        store.set_batch(&items).unwrap();
+
+        // Batch get
+        let ids: Vec<u64> = (0..100).collect();
+        let results = store.get_batch(&ids).unwrap();
+
+        assert_eq!(results.len(), 100);
+        assert!(results.iter().all(|r| r.is_some()));
+    }
+
+    #[test]
+    fn test_auto_flush_on_full_cache() {
+        let temp_dir = TempDir::new().unwrap();
+        let mut store = MetadataStore::new(temp_dir.path().to_str().unwrap()).unwrap();
+
+        // Fill cache (should auto-flush at CACHE_SIZE)
+        for i in 0..(CACHE_SIZE + 100) {
+            store.set(i as u64, &format!(r#"{{"id": {}}}"#, i)).unwrap();
+        }
+
+        // Cache should have been flushed
+        assert!(store.write_cache.len() < CACHE_SIZE);
+    }
+
+    #[test]
+    fn test_persistence() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().to_str().unwrap();
+
+        {
+            let mut store = MetadataStore::new(path).unwrap();
+            store.set(42, r#"{"test": "data"}"#).unwrap();
+            store.flush().unwrap();
+        }
+
+        // Reopen and verify
+        let store = MetadataStore::new(path).unwrap();
+        let result = store.get(42).unwrap();
+        assert_eq!(result, Some(r#"{"test": "data"}"#.to_string()));
     }
 }

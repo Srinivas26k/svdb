@@ -1,6 +1,6 @@
 [package]
 name = "srvdb"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2021"
 authors = ["Srinivas Nampalli"]
 description = "Zero-Gravity Embedded Vector Database - Offline-first, RAM-efficient vector search"
@@ -10,51 +10,52 @@ keywords = ["vector", "database", "embedding", "search", "quantization"]
 categories = ["database", "embedded"]
 
 [lib]
-name = "srvdb"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# Memory mapping for zero-copy vector storage
+# Core dependencies
+anyhow = "1.0"
 memmap2 = "0.9"
+redb = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# SIMD acceleration
+simsimd = "6.2"
 
 # Parallel processing
 rayon = "1.10"
 
-# Embedded key-value store for metadata
-redb = "2.2"
-
-# Error handling
-anyhow = "1.0"
-thiserror = "2.0"
-
-# Serialization (zero-copy preferred)
-rkyv = "0.8"
-serde_json = "1.0"
-
-# SIMD-accelerated vector operations
-simsimd = "=6.0"
+# Fast hashing for Python bindings
+rustc-hash = "2.0"
 
 # Python bindings
-pyo3 = { version = "0.22", features = ["extension-module"] }
-
-# Optional: SIMD support
-wide = { version = "0.7", optional = true }
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
 
 [dev-dependencies]
-criterion = "0.5"
+tempfile = "3.10"
+criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
-tempfile = "3.13"
 
 [features]
-default = ["simd"]
-simd = ["wide"]
+default = ["python"]
+python = ["pyo3"]
 
 [profile.release]
 opt-level = 3
-lto = true
-codegen-units = 1
-strip = true
+lto = "fat"              # Link-time optimization
+codegen-units = 1        # Single codegen unit for best optimization
+panic = "abort"          # Smaller binary, faster unwinding
+strip = true             # Strip symbols
+debug = false
 
-[[bench]]
-name = "search_benchmark"
-harness = false
+# CPU-specific optimizations (use on production)
+# Uncomment for maximum performance on your target architecture
+# [target.x86_64-unknown-linux-gnu]
+# rustflags = ["-C", "target-cpu=native"]
+
+# [target.aarch64-unknown-linux-gnu]
+# rustflags = ["-C", "target-cpu=native"]
+
+[profile.bench]
+inherits = "release"
