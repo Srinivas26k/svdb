@@ -25,9 +25,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/svdb"
-Repository = "https://github.com/yourusername/svdb"
-Documentation = "https://github.com/yourusername/svdb/blob/main/README.md"
+Homepage = "https://github.com/Srinivas26k/svdb"
+Repository = "https://github.com/Srinivas26k/svdb"
+Documentation = "https://github.com/Srinivas26k/svdb/blob/main/README.md"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
