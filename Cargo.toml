@@ -50,6 +50,6 @@ lto = true
 codegen-units = 1
 strip = true
 
-# [[bench]]
-# name = "search_benchmark"
-# harness = false
+[[bench]]
+name = "search_benchmark"
+harness = false
