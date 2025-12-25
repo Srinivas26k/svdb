@@ -1,6 +1,6 @@
 [package]
 name = "srvdb"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 authors = ["Srinivas Nampalli"]
 description = "Zero-Gravity Embedded Vector Database - Offline-first, RAM-efficient vector search"
