@@ -69,14 +69,14 @@ for id, score in results:
 │  Python API (GIL-Free Search)               │
 ├─────────────────────────────────────────────┤
 │  Rust Core Engine                           │
-│  ├─ 8MB Buffered Writer (Batch Append)     │
-│  ├─ Memory-Mapped Reader (Zero-Copy)       │
-│  ├─ SIMD Cosine Similarity (AVX-512/NEON)  │
-│  └─ Lock-Free Parallel Search              │
+│  ├─ 8MB Buffered Writer (Batch Append)      │
+│  ├─ Memory-Mapped Reader (Zero-Copy)        │
+│  ├─ SIMD Cosine Similarity (AVX-512/NEON)   │
+│  └─ Lock-Free Parallel Search               │
 ├─────────────────────────────────────────────┤
 │  Storage Layer                              │
-│  ├─ vectors.bin (mmap'd, aligned)          │
-│  └─ metadata.db (redb, ACID)               │
+│  ├─ vectors.bin (mmap'd, aligned)           │
+│  └─ metadata.db (redb, ACID)                │
 └─────────────────────────────────────────────┘
 ```
 
@@ -168,8 +168,8 @@ export SVDB_AUTO_FLUSH_THRESHOLD=1000  # vectors
 ### Build from Source
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/srvdb
-cd srvdb
+git clone https://github.com/Srinivas26k/srvdb
+cd svdb
 
 # Build with optimizations
 cargo build --release --features python
@@ -235,4 +235,4 @@ Built with:
 
 **Ready for production AI/ML workloads.** 🚀
 
-For issues and questions, visit our [GitHub Issues](https://github.com/yourusername/srvdb/issues).
+For issues and questions, visit our [GitHub Issues](https://github.com/Srinivas26k/srvdb/issues).

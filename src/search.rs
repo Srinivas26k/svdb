@@ -175,6 +175,88 @@ pub fn search_quantized_batch(
         .collect()
 }
 
+// ============================================================================
+// HNSW GRAPH-BASED SEARCH
+// ============================================================================
+
+/// HNSW search for full-precision vectors
+/// 
+/// Uses graph-based approximate nearest neighbor search for O(log n) complexity
+pub fn search_hnsw(
+    storage: &VectorStorage,
+    hnsw: &crate::hnsw::HNSWIndex,
+    query: &EmbeddedVector,
+    k: usize,
+) -> Result<Vec<(u64, f32)>> {
+    // HNSW graph traversal with query-to-storage distance function
+    let candidates = hnsw.search(0, k * 2, &|_query_id: u64, vec_id: u64| -> f32 {
+        if let Some(vec) = storage.get(vec_id) {
+            1.0 - cosine_similarity(query, vec) // Distance (lower is better)
+        } else {
+            f32::MAX
+        }
+    })?;
+    
+    // Convert back to similarities (higher is better) and take top-k
+    let mut results: Vec<(u64, f32)> = candidates
+        .into_iter()
+        .map(|(id, dist)| (id, 1.0 - dist)) // Convert distance back to similarity
+        .collect();
+    
+    // Sort by similarity (descending)
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+    results.truncate(k);
+    
+    Ok(results)
+}
+
+/// HNSW search for quantized vectors
+/// 
+/// Combines HNSW graph traversal with PQ distance computation
+pub fn search_hnsw_quantized(
+    storage: &QuantizedVectorStorage,
+    hnsw: &crate::hnsw::HNSWIndex,
+    query: &EmbeddedVector,
+    k: usize,
+) -> Result<Vec<(u64, f32)>> {
+    // Normalize query for cosine similarity
+    let mut normalized_query = *query;
+    let norm: f32 = normalized_query.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 1e-10 {
+        for x in normalized_query.iter_mut() {
+            *x /= norm;
+        }
+    }
+    
+    // Precompute distance table for ADC
+    let dtable = storage.quantizer.compute_distance_table(&normalized_query);
+    
+    // Distance function using PQ asymmetric distance
+    let distance_fn = |_query_id: u64, vec_id: u64| -> f32 {
+        if let Some(qvec) = storage.get(vec_id) {
+            // ADC returns cosine similarity, convert to distance
+            let similarity = storage.quantizer.asymmetric_distance(qvec, &dtable);
+            1.0 - similarity
+        } else {
+            f32::MAX
+        }
+    };
+    
+    // Search HNSW graph
+    let candidates = hnsw.search(0, k * 2, &distance_fn)?;
+    
+    // Convert back to similarities and take top-k
+    let mut results: Vec<(u64, f32)> = candidates
+        .into_iter()
+        .map(|(id, dist)| (id, 1.0 - dist))
+        .collect();
+    
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
+    results.truncate(k);
+    
+    Ok(results)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

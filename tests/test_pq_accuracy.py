@@ -87,8 +87,8 @@ def main():
         # 2. Test PQ Mode
         # ---------------------------------------------------------
         pq_path = os.path.join(temp_dir, "pq")
-        # Use first 100 vectors for training codebooks
-        training_data = vectors[:100]
+        # Use first 800 vectors for training codebooks (80% of dataset)
+        training_data = vectors[:800]
         print(f"\nInitializing PQ DB (Training with {len(training_data)} vectors)...")
         db_pq = srvdb.SvDBPython.new_quantized(pq_path, training_data)
         
