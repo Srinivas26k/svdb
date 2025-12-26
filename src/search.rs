@@ -121,8 +121,17 @@ pub fn search_quantized(
 
     let actual_k = k.min(count);
 
+    // Normalize query vector for cosine similarity
+    let mut normalized_query = *query;
+    let norm: f32 = normalized_query.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 1e-10 {
+        for x in normalized_query.iter_mut() {
+            *x /= norm;
+        }
+    }
+
     // Precompute distance table once (ADC optimization)
-    let dtable = storage.quantizer.compute_distance_table(query);
+    let dtable = storage.quantizer.compute_distance_table(&normalized_query);
 
     // Process in cache-friendly batches
     let num_batches = (count + BATCH_SIZE - 1) / BATCH_SIZE;
@@ -139,8 +148,9 @@ pub fn search_quantized(
                     .iter()
                     .enumerate()
                     .map(|(i, qvec)| {
-                        let score = storage.quantizer.asymmetric_distance(qvec, &dtable);
-                        (start as u64 + i as u64, score)
+                        // ADC now returns approximate dot product (Cosine Similarity)
+                        let cosine_score = storage.quantizer.asymmetric_distance(qvec, &dtable);
+                        (start as u64 + i as u64, cosine_score)
                     })
                     .collect::<Vec<_>>()
             } else {

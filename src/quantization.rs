@@ -32,6 +32,17 @@ pub struct Codebook {
     pub centroids: Vec<[f32; D_SUB]>,  // K centroids
 }
 
+/// Normalize a vector to unit length (L2 norm = 1.0)
+#[inline]
+fn normalize_vector<const D: usize>(vec: &mut [f32; D]) {
+    let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 1e-10 {
+        for x in vec.iter_mut() {
+            *x /= norm;
+        }
+    }
+}
+
 impl Codebook {
     /// Create new codebook with k-means clustering
     pub fn train(vectors: &[[f32; D_SUB]], k: usize, max_iter: usize) -> Result<Self> {
@@ -39,6 +50,8 @@ impl Codebook {
             anyhow::bail!("Cannot train on empty dataset");
         }
 
+        // Use vectors as-is (don't normalize sub-vectors)
+        // Cosine similarity will be computed via magnitude normalization in distance calculation
         let mut centroids = Self::kmeans_plusplus_init(vectors, k);
         
         for _ in 0..max_iter {
@@ -66,6 +79,8 @@ impl Codebook {
                     for j in 0..D_SUB {
                         new_centroids[i][j] /= counts[i] as f32;
                     }
+                    // Normalize centroids to unit length for proper cosine similarity
+                    normalize_vector(&mut new_centroids[i]);
                     
                     // Check convergence
                     if Self::euclidean_distance(&centroids[i], &new_centroids[i]) > 1e-6 {
@@ -127,14 +142,33 @@ impl Codebook {
         centroids
     }
 
-    /// Find nearest centroid index
+    /// Find nearest centroid index using cosine similarity
     #[inline]
     fn nearest_centroid(vec: &[f32; D_SUB], centroids: &[[f32; D_SUB]]) -> usize {
+        // Calculate magnitude of input vector
+        let vec_magnitude: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
+        
+        if vec_magnitude < 1e-10 {
+            return 0; // Default to first centroid if zero vector
+        }
+        
         centroids
             .iter()
             .enumerate()
-            .map(|(i, c)| (i, Self::euclidean_distance(vec, c)))
-            .min_by(|(_, d1), (_, d2)| d1.partial_cmp(d2).unwrap())
+            .map(|(i, c)| {
+                // Compute centroid magnitude
+                let c_magnitude: f32 = c.iter().map(|x| x * x).sum::<f32>().sqrt();
+                
+                if c_magnitude < 1e-10 {
+                    return (i, -1.0); // Very low similarity for zero centroid
+                }
+                
+                // Compute cosine similarity
+                let dot: f32 = vec.iter().zip(c.iter()).map(|(a, b)| a * b).sum();
+                let cosine = dot / (vec_magnitude * c_magnitude);
+                (i, cosine)
+            })
+            .max_by(|(_, s1), (_, s2)| s1.partial_cmp(s2).unwrap())
             .map(|(i, _)| i)
             .unwrap()
     }
@@ -155,15 +189,40 @@ impl Codebook {
     /// Encode a sub-vector to its nearest centroid index
     #[inline]
     pub fn encode(&self, sub_vec: &[f32; D_SUB]) -> u8 {
+        // Use sub-vector as-is, distance computation handles normalization
         Self::nearest_centroid(sub_vec, &self.centroids) as u8
     }
 
     /// Compute distances from query sub-vector to all centroids
+    /// Centroids are normalized, query sub-vector is not
+    /// Returns NEGATIVE cosine similarity (for minimization-based search)
     #[inline]
     pub fn compute_distances(&self, query_sub: &[f32; D_SUB]) -> [f32; K] {
+        // Calculate magnitude of query sub-vector
+        let query_magnitude: f32 = query_sub.iter()
+            .map(|x| x * x)
+            .sum::<f32>()
+            .sqrt();
+        
         let mut distances = [0.0f32; K];
+        
+        // If query magnitude is near zero, return zeros
+        if query_magnitude < 1e-10 {
+            return distances;
+        }
+        
         for (i, centroid) in self.centroids.iter().enumerate() {
-            distances[i] = Self::euclidean_distance(query_sub, centroid);
+            // Compute dot product (centroid is normalized to unit length)
+            let dot_product: f32 = query_sub.iter()
+                .zip(centroid.iter())
+                .map(|(a, b)| a * b)
+                .sum();
+            
+            // Divide by query magnitude to get cosine (centroid magnitude is 1.0)
+            let cosine = dot_product / query_magnitude;
+            
+            // Negate because we minimize distance but want to maximize similarity
+            distances[i] = -cosine;
         }
         distances
     }
@@ -193,7 +252,7 @@ impl ProductQuantizer {
             .map(|m_idx| {
                 println!("Training sub-quantizer {}/{}", m_idx + 1, M);
                 
-                // Extract sub-vectors for this sub-quantizer
+                // Extract and normalize sub-vectors for this sub-quantizer
                 let sub_vectors: Vec<[f32; D_SUB]> = training_data
                     .iter()
                     .map(|vec| {
@@ -205,7 +264,7 @@ impl ProductQuantizer {
                     })
                     .collect();
 
-                // Train codebook for this sub-space
+                // Train codebook for this sub-space (normalization happens inside)
                 Codebook::train(&sub_vectors, K, max_iter)
                     .context(format!("Failed to train codebook {}", m_idx))
             })
@@ -255,14 +314,15 @@ impl ProductQuantizer {
     }
 
     /// Asymmetric distance computation using precomputed distance table
+    /// Returns approximate Cosine Similarity (averaged across all sub-spaces)
     #[inline]
     pub fn asymmetric_distance(&self, qvec: &QuantizedVector, dtable: &DistanceTable) -> f32 {
-        let mut sum = 0.0f32;
+        let mut sum_neg_cosine = 0.0f32;
         for (m_idx, &code) in qvec.iter().enumerate() {
-            sum += dtable.tables[m_idx][code as usize];
+            sum_neg_cosine += dtable.tables[m_idx][code as usize];
         }
-        // Convert L2 distance to similarity score (inverse)
-        1.0 / (1.0 + sum)
+        // Negate to get positive, then divide by M to get average cosine similarity
+        -sum_neg_cosine / (self.m as f32)
     }
 
     /// Save codebooks to bytes
