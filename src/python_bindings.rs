@@ -247,13 +247,17 @@ impl SvDBPython {
     /// 
     /// Returns:
     ///     List of (id, score) tuples sorted by score descending
-    fn search(&self, query: Vec<f32>, k: usize) -> PyResult<Vec<(String, f32)>> {
+    fn search(&mut self, query: Vec<f32>, k: usize) -> PyResult<Vec<(String, f32)>> {
         if query.len() != self.dimension {
             return Err(PyValueError::new_err(format!(
                 "Query dimension {} doesn't match database dimension {}",
-                query.len(), self.dimension
+               query.len(), self.dimension
             )));
         }
+
+        // Auto-persist before search to ensure all vectors are searchable
+        VectorEngine::persist(&mut self.db)
+            .map_err(|e| PyRuntimeError::new_err(format!("Auto-persist failed: {}", e)))?;
 
         let results = Python::with_gil(|py| {
             py.allow_threads(|| {
@@ -271,7 +275,7 @@ impl SvDBPython {
 
     /// Batch search
     fn search_batch(
-        &self,
+        &mut self,
         queries: Vec<Vec<f32>>,
         k: usize,
     ) -> PyResult<Vec<Vec<(String, f32)>>> {
@@ -284,6 +288,10 @@ impl SvDBPython {
                 )));
             }
         }
+
+        // Auto-persist before search
+        VectorEngine::persist(&mut self.db)
+            .map_err(|e| PyRuntimeError::new_err(format!("Auto-persist failed: {}", e)))?;
 
         let query_vecs: Vec<crate::Vector> = queries
             .into_iter()
