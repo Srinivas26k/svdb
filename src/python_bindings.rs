@@ -56,6 +56,12 @@ impl SvDBPython {
                 config.quantization.enabled = true;
                 config.quantization.mode = crate::types::QuantizationMode::Scalar;
             }
+            "auto" => {
+                // Auto mode logic will be triggered after init
+                // For init config, we start safer (Flat) or let Apply Strategy decide later.
+                // We'll mark it as Flat initially but return the object with IndexMode::Auto
+                config.index_type = crate::types::IndexType::Flat;
+            }
             "pq" | "product" => {
                 config.index_type = crate::types::IndexType::ProductQuantized;
                 config.quantization.enabled = true;
@@ -64,14 +70,23 @@ impl SvDBPython {
             }
             _ => {
                 return Err(PyValueError::new_err(format!(
-                    "Invalid mode '{}'. Choose: 'flat', 'hnsw', 'sq8', or 'pq'",
+                    "Invalid mode '{}'. Choose: 'flat', 'hnsw', 'sq8', 'pq', or 'auto'",
                     mode
                 )));
             }
         }
 
-        let db = crate::SvDB::new_with_config(&path, config)
+        let mut db = crate::SvDB::new_with_config(&path, config)
             .map_err(|e| PyRuntimeError::new_err(format!("Database init failed: {}", e)))?;
+
+        // Apply Auto Strategy if requested
+        if mode.to_lowercase() == "auto" {
+            db.set_mode(crate::IndexMode::Auto);
+        } else if mode.to_lowercase() == "sq8" || mode.to_lowercase() == "scalar" {
+            db.current_mode = crate::IndexMode::Sq8;
+        } else if mode.to_lowercase() == "hnsw" {
+             db.current_mode = crate::IndexMode::Hnsw;
+        }
 
         Ok(Self {
             db,

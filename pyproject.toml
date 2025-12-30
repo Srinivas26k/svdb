@@ -35,3 +35,8 @@ Documentation = "https://github.com/Srinivas26k/svdb/blob/main/README.md"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
+
+[dependency-groups]
+dev = [
+    "maturin>=1.10.2",
+]

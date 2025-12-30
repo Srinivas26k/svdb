@@ -28,11 +28,15 @@ pub mod hnsw; // Public for HNSW access
 #[cfg(feature = "pyo3")]
 pub mod python_bindings;
 
+pub mod strategy;
+pub mod auto_tune;
+
 pub use storage::VectorStorage;
 pub use metadata::MetadataStore;
 pub use quantization::{ProductQuantizer, QuantizedVector};
 pub use quantized_storage::QuantizedVectorStorage;
 pub use hnsw::{HNSWIndex, HNSWConfig};
+pub use strategy::IndexMode;
 
 /// High-performance vector database trait
 pub trait VectorEngine {
@@ -48,13 +52,49 @@ pub trait VectorEngine {
 
 /// Main database implementation
 pub struct SvDB {
+    pub(crate) path: std::path::PathBuf,
     pub(crate) vector_storage: Option<VectorStorage>,
     pub(crate) quantized_storage: Option<QuantizedVectorStorage>,
     pub(crate) scalar_storage: Option<storage::ScalarQuantizedStorage>,
     pub(crate) metadata_store: MetadataStore,
     pub(crate) config: types::QuantizationConfig,
+    pub(crate) index_type: types::IndexType,
     pub(crate) hnsw_index: Option<hnsw::HNSWIndex>,
     pub(crate) hnsw_config: Option<hnsw::HNSWConfig>,
+    pub current_mode: IndexMode,
+}
+
+impl SvDB {
+    /// Set the indexing strategy mode.
+    /// 
+    /// If `Auto` is selected, the database will analyze the system and dataset
+    /// to choose the best internal configuration.
+    pub fn set_mode(&mut self, mode: IndexMode) {
+        self.current_mode = mode;
+        
+        if mode == IndexMode::Auto {
+            println!("SrvDB Adaptive Core active. Analyzing environment...");
+            auto_tune::apply_auto_strategy(self);
+        } else {
+            // Manual overrides
+            match mode {
+                IndexMode::Flat => {
+                    self.index_type = types::IndexType::Flat;
+                    self.config.enabled = false;
+                },
+                IndexMode::Hnsw => {
+                    self.index_type = types::IndexType::HNSW;
+                    self.config.enabled = false;
+                },
+                IndexMode::Sq8 => {
+                    self.index_type = types::IndexType::ScalarQuantized;
+                    self.config.enabled = true;
+                    self.config.mode = types::QuantizationMode::Scalar;
+                },
+                IndexMode::Auto => {} // Handled above
+            }
+        }
+    }
 }
 
 impl VectorEngine for SvDB {
@@ -67,13 +107,16 @@ impl VectorEngine for SvDB {
         let metadata_store = MetadataStore::new(path)?;
 
         Ok(Self {
+            path: db_path.to_path_buf(),
             vector_storage: Some(vector_storage),
             quantized_storage: None,
             scalar_storage: None,
             metadata_store,
             config: types::QuantizationConfig::default(),
+            index_type: types::IndexType::Flat,
             hnsw_index: None,
             hnsw_config: None,
+            current_mode: IndexMode::Flat,
         })
     }
 
@@ -242,6 +285,11 @@ impl VectorEngine for SvDB {
     }
 
     fn persist(&mut self) -> Result<()> {
+        // Auto-Tuning Hook: Check if we should upgrade strategy
+        if let Err(e) = auto_tune::check_and_migrate(self) {
+            eprintln!("Auto-Tuning Migration Warning: {}", e);
+        }
+
         if let Some(ref mut vstorage) = self.vector_storage {
             vstorage.flush()?;
         }
@@ -251,6 +299,14 @@ impl VectorEngine for SvDB {
         if let Some(ref mut scalar) = self.scalar_storage {
             scalar.flush()?;
         }
+        
+        // HNSW Persistence
+        if let Some(ref hnsw) = self.hnsw_index {
+            let graph_path = self.path.join("hnsw.graph");
+            let bytes = hnsw.to_bytes()?;
+            std::fs::write(graph_path, bytes)?;
+        }
+        
         self.metadata_store.flush()?;
         Ok(())
     }
@@ -279,14 +335,36 @@ impl SvDB {
         let vector_storage = VectorStorage::new(path, dimension)?;
         let metadata_store = MetadataStore::new(path)?;
 
+        // Check for existing HNSW index
+        let graph_path = db_path.join("hnsw.graph");
+        let (hnsw_index, hnsw_config, final_index_type) = if graph_path.exists() {
+             match std::fs::read(&graph_path) {
+                 Ok(bytes) => {
+                     match hnsw::HNSWIndex::from_bytes(&bytes) {
+                         Ok(index) => (Some(index), None, types::IndexType::HNSW), // Config is inside index
+                         Err(e) => {
+                             eprintln!("Failed to load HNSW graph: {}", e);
+                             (None, None, config.index_type)
+                         }
+                     }
+                 },
+                 Err(_) => (None, None, config.index_type)
+             }
+        } else {
+            (None, None, config.index_type)
+        };
+
         Ok(Self {
+            path: db_path.to_path_buf(),
             vector_storage: Some(vector_storage),
             quantized_storage: None,
             scalar_storage: None,
             metadata_store,
             config: config.quantization,
-            hnsw_index: None,
-            hnsw_config: None,
+            index_type: final_index_type,
+            hnsw_index,
+            hnsw_config,
+            current_mode: IndexMode::Flat, // Default, will be updated if config has other types
         })
     }
 
@@ -316,13 +394,16 @@ let _dimension = training_vectors[0].data.len();
         config.enabled = true;
         
         Ok(Self {
+            path: db_path.to_path_buf(),
             vector_storage: None,
             quantized_storage: Some(quantized_storage),
             scalar_storage: None,
             metadata_store,
             config,
+            index_type: types::IndexType::ProductQuantized,
             hnsw_index: None,
             hnsw_config: None,
+            current_mode: IndexMode::Flat, // PQ is technically a flat scan of compressed vectors
         })
     }
     
@@ -347,13 +428,16 @@ let _dimension = training_vectors[0].data.len();
         config.mode = types::QuantizationMode::Scalar;
 
         Ok(Self {
+            path: db_path.to_path_buf(),
             vector_storage: None, // Disable full precision storage!
             quantized_storage: None,
             scalar_storage: Some(scalar_storage),
             metadata_store,
             config,
+            index_type: types::IndexType::ScalarQuantized,
             hnsw_index: None,
             hnsw_config: None,
+            current_mode: IndexMode::Sq8,
         })
     }
     
@@ -382,13 +466,16 @@ let _dimension = training_vectors[0].data.len();
         let hnsw_index = hnsw::HNSWIndex::new(hnsw_config.clone());
 
         Ok(Self {
+            path: db_path.to_path_buf(),
             vector_storage: Some(vector_storage),
             quantized_storage: None,
             scalar_storage: None,
             metadata_store,
             config: types::QuantizationConfig::default(),
+            index_type: types::IndexType::HNSW,
             hnsw_index: Some(hnsw_index),
             hnsw_config: Some(hnsw_config),
+            current_mode: IndexMode::Hnsw,
         })
     }
     
@@ -436,13 +523,16 @@ let _dimension = training_vectors[0].data.len();
         let hnsw_index = hnsw::HNSWIndex::new(hnsw_cfg.clone());
         
         Ok(Self {
+            path: db_path.to_path_buf(),
             vector_storage: None,
             quantized_storage: Some(quantized_storage),
             scalar_storage: None,
             metadata_store,
             config,
+            index_type: types::IndexType::HNSWQuantized,
             hnsw_index: Some(hnsw_index),
             hnsw_config: Some(hnsw_cfg),
+            current_mode: IndexMode::Hnsw,
         })
     }
     
