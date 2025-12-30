@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use srvdb::{SvDB, VectorEngine, Vector};
 use rand::Rng;
+use srvdb::{SrvDB, Vector, VectorEngine};
 
 const DIM: usize = 1536;
 
@@ -14,7 +14,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     // 1. Setup DB
     let db_path = "./bench_db";
     let _ = std::fs::remove_dir_all(db_path); // Clean start
-    let mut db = SvDB::new(db_path).unwrap();
+    let mut db = SrvDB::new(db_path).unwrap();
 
     // 2. Populate with 10,000 vectors
     println!("Populating DB with 10,000 vectors for benchmark...");
@@ -35,7 +35,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             db.search(black_box(&query), black_box(10)).unwrap();
         })
     });
-    
+
     // Cleanup
     let _ = std::fs::remove_dir_all(db_path);
 }

@@ -26,7 +26,7 @@ This release introduces **HNSW (Hierarchical Navigable Small World)** approximat
    import srvdb
    
    # Create database with HNSW indexing
-   db = srvdb.SvDB.new_with_hnsw(
+   db = srvdb.SrvDB.new_with_hnsw(
        "path/to/db",
        m=16,                  # Connections per node
        ef_construction=200,   # Build quality
@@ -40,7 +40,7 @@ This release introduces **HNSW (Hierarchical Navigable Small World)** approximat
 2. **HNSW + Product Quantization (Hybrid)**
    ```python
    # Create database with HNSW + PQ compression
-   db = srvdb.SvDB.new_with_hnsw_quantized(
+   db = srvdb.SrvDB.new_with_hnsw_quantized(
        "path/to/db",
        training_vectors=training_data,  # 5k-10k samples
        m=16,
@@ -63,9 +63,9 @@ db.set_ef_search(20)   # Lower = faster, lower recall
 
 ### New API Methods
 
-- `SvDB.new_with_hnsw(path, m, ef_construction, ef_search)` - Create HNSW-enabled database
-- `SvDB.new_with_hnsw_quantized(path, training_vectors, m, ef_construction, ef_search)` - Create HNSW+PQ database
-- `SvDB.set_ef_search(ef_search)` - Tune search quality at runtime
+- `SrvDB.new_with_hnsw(path, m, ef_construction, ef_search)` - Create HNSW-enabled database
+- `SrvDB.new_with_hnsw_quantized(path, training_vectors, m, ef_construction, ef_search)` - Create HNSW+PQ database
+- `SrvDB.set_ef_search(ef_search)` - Tune search quality at runtime
 
 ## 🔧 Technical Improvements
 
@@ -149,7 +149,7 @@ ef_search | Recall@10 | Search Time
 **Existing code continues to work:**
 ```python
 # Your existing code works unchanged
-db = srvdb.SvDB("path/to/db")
+db = srvdb.SrvDB("path/to/db")
 db.add(vector, metadata)
 results = db.search(query, k=10)
 ```
@@ -157,7 +157,7 @@ results = db.search(query, k=10)
 **To enable HNSW:**
 ```python
 # Simply use the new constructor
-db = srvdb.SvDB.new_with_hnsw("path/to/db", m=16, ef_construction=200, ef_search=50)
+db = srvdb.SrvDB.new_with_hnsw("path/to/db", m=16, ef_construction=200, ef_search=50)
 # All other API methods remain the same
 ```
 
@@ -187,7 +187,7 @@ ef_search = 20
 **For memory-constrained environments:**
 ```python
 # Use HNSW + PQ hybrid
-db = srvdb.SvDB.new_with_hnsw_quantized(
+db = srvdb.SrvDB.new_with_hnsw_quantized(
     "path/to/db",
     training_vectors=sample_vectors[:5000],
     m=8,
@@ -250,7 +250,7 @@ import srvdb
 import numpy as np
 
 # Create HNSW-enabled database
-db = srvdb.SvDB.new_with_hnsw(
+db = srvdb.SrvDB.new_with_hnsw(
     "./my_vector_db",
     m=16,
     ef_construction=200,
@@ -270,4 +270,4 @@ for result in results:
 
 ---
 
-**Full Changelog**: [v0.1.7...v0.1.8](https://github.com/Srinivas26k/svdb/compare/v0.1.7...v0.1.8)
+**Full Changelog**: [v0.1.7...v0.1.8](https://github.com/Srinivas26k/srvdb/compare/v0.1.7...v0.1.8)

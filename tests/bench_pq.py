@@ -47,9 +47,9 @@ def benchmark_mode(mode, n_vectors=10000, n_queries=100):
         if mode == "pq":
             # Use first 1000 vectors for training
             training_data = vectors[:1000]
-            db = srvdb.SvDBPython.new_quantized(temp_dir, training_data)
+            db = srvdb.SrvDBPython.new_quantized(temp_dir, training_data)
         else:
-            db = srvdb.SvDBPython(temp_dir)
+            db = srvdb.SrvDBPython(temp_dir)
         
         init_time = time.time() - start
         print(f"  Init time: {init_time:.2f}s")

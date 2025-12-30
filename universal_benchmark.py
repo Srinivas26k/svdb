@@ -33,6 +33,40 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # =========================================================
+# 0. UI HELPERS (ColorChalk)
+# =========================================================
+
+class ColorChalk:
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+    @staticmethod
+    def _wrap(text, color):
+        return f"{color}{text}{ColorChalk.ENDC}"
+
+    @staticmethod
+    def h1(text): return ColorChalk._wrap(text, ColorChalk.HEADER + ColorChalk.BOLD)
+    @staticmethod
+    def h2(text): return ColorChalk._wrap(text, ColorChalk.OKBLUE + ColorChalk.BOLD)
+    @staticmethod
+    def success(text): return ColorChalk._wrap(text, ColorChalk.OKGREEN)
+    @staticmethod
+    def info(text): return ColorChalk._wrap(text, ColorChalk.OKCYAN)
+    @staticmethod
+    def warning(text): return ColorChalk._wrap(text, ColorChalk.WARNING)
+    @staticmethod
+    def fail(text): return ColorChalk._wrap(text, ColorChalk.FAIL + ColorChalk.BOLD)
+    @staticmethod
+    def bold(text): return ColorChalk._wrap(text, ColorChalk.BOLD)
+
+# =========================================================
 # 1. SYSTEM DETECTION & CONFIGURATION
 # =========================================================
 
@@ -87,7 +121,7 @@ def generate_adversarial_data(n_total, dim=1536, seed=42):
     This mix simulates real-world semantic distributions where 
     Product Quantization (PQ) often struggles.
     """
-    print(f"  -> Generating {n_total} vectors (Adversarial Mix)...")
+    print(ColorChalk.info(f"  -> Generating {n_total} vectors (Adversarial Mix)..."))
     np.random.seed(seed)
     
     n_random = int(n_total * 0.7)
@@ -120,7 +154,7 @@ def generate_adversarial_data(n_total, dim=1536, seed=42):
     return train_vecs, query_vecs, train_ids
 
 def compute_ground_truth(train_vecs, query_vecs, k=10):
-    print("  -> Computing Ground Truth (Brute Force)...")
+    print(ColorChalk.info("  -> Computing Ground Truth (Brute Force)..."))
     nbrs = NearestNeighbors(n_neighbors=k, algorithm='brute', metric='cosine', n_jobs=-1).fit(train_vecs)
     _, indices = nbrs.kneighbors(query_vecs)
     return indices
@@ -130,21 +164,22 @@ def compute_ground_truth(train_vecs, query_vecs, k=10):
 # =========================================================
 
 def run_benchmark():
-    print("=" * 70)
-    print("  SRVDB UNIVERSAL BENCHMARK")
-    print("=" * 70)
+    print(ColorChalk.h2("=" * 70))
+    print(ColorChalk.h1("  SRVDB UNIVERSAL BENCHMARK"))
+    print(ColorChalk.h2("=" * 70))
     
     # Detect System
     system = SystemProfile()
-    print(f"\nHardware Detected: {system}")
+    print(f"\n{ColorChalk.bold('Hardware Detected:')} {system}")
     
     # Prepare Data
-    train_vecs, query_vecs, train_ids = generate_adversarial_data(system.n_vectors)
+    DIMENSION = 1536
+    train_vecs, query_vecs, train_ids = generate_adversarial_data(system.n_vectors, dim=DIMENSION)
     gt_indices = compute_ground_truth(train_vecs, query_vecs)
     
     # Init Report
     report = {
-        "benchmark_version": "1.0",
+        "benchmark_version": "2.0",
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "system_info": {
             "os": system.platform,
@@ -155,21 +190,22 @@ def run_benchmark():
         },
         "config": {
             "dataset_size": system.n_vectors,
-            "dimensions": 1536,
+            "dimensions": DIMENSION,
             "n_queries": 100,
             "data_type": "Adversarial Mix (70% Random / 30% Clustered)"
         },
         "results": {}
     }
     
-    DB_ROOT = "./benchmark_universal_db"
+    DB_ROOT = "./benchmark_full_db"
     if os.path.exists(DB_ROOT):
         shutil.rmtree(DB_ROOT)
     
-    modes = ['flat', 'hnsw', 'pq']
+    # Comprehensive SrvDB v0.2.0 Modes
+    modes = ['flat', 'hnsw', 'sq8', 'pq', 'ivf', 'auto']
     
     for mode in modes:
-        print(f"\n--- Benchmarking Mode: {mode.upper()} ---")
+        print(f"\n{ColorChalk.h2(f'--- Benchmarking Mode: {mode.upper()} ---')}")
         db_path = os.path.join(DB_ROOT, mode)
         mode_stats = {}
         
@@ -178,13 +214,37 @@ def run_benchmark():
             t0 = time.time()
             ram_start = get_rss_mb()
             
-            if mode == 'pq':
-                # Train PQ on subset (1k or 10%)
-                train_subset = max(1000, len(train_vecs) // 10)
-                db = srvdb.SvDBPython.new_quantized(db_path, train_vecs[:train_subset].tolist())
-            else:
-                db = srvdb.SvDBPython(db_path)
+            # v0.2.0 Initialization Routing
+            if mode == 'sq8':
+                # SQ8 requires separate static constructor with training data
+                train_subset_size = max(1000, len(train_vecs) // 10)
+                train_subset = train_vecs[:train_subset_size].tolist()
+                print(ColorChalk.info(f"    -> Initializing SQ8 with {train_subset_size} training vectors..."))
+                db = srvdb.SrvDBPython.new_scalar_quantized(db_path, DIMENSION, train_subset)
             
+            elif mode == 'pq':
+                # PQ requires separate static constructor with training data
+                train_subset_size = max(1000, len(train_vecs) // 5)
+                train_subset = train_vecs[:train_subset_size].tolist()
+                print(ColorChalk.info(f"    -> Initializing PQ with {train_subset_size} training vectors..."))
+                db = srvdb.SrvDBPython.new_product_quantized(db_path, DIMENSION, train_subset)
+
+            elif mode == 'ivf':
+                # IVF requires explicit train step
+                db = srvdb.SrvDBPython(db_path, DIMENSION, mode='ivf')
+                print(ColorChalk.info("    -> Configuring & Training IVF Index..."))
+                db.configure_ivf(nlist=100, nprobe=10)
+                db.train_ivf()
+            
+            else:
+                # Flat, HNSW, PQ, Auto use standard constructor with 'mode' arg
+                # (PQ training happens internally if configured, or it might just be config setup)
+                db = srvdb.SrvDBPython(db_path, DIMENSION, mode=mode)
+                
+                # If HNSW or Auto, no extra step needed here usually.
+                if mode == 'auto':
+                    print(ColorChalk.info("    -> Auto-Tuner: Active (will adapt to system/data)"))
+
             init_time = time.time() - t0
             
             # 2. Ingest
@@ -197,6 +257,8 @@ def run_benchmark():
                     train_vecs[i:end].tolist(),
                     [f'{{"id":{x}}}' for x in range(i, end)]
                 )
+            
+            # Persist to disk
             db.persist()
             ingest_time = time.time() - t0
             
@@ -205,17 +267,24 @@ def run_benchmark():
             disk_usage = get_disk_mb(db_path)
             
             # 4. Search & Recall
-            # For Flat, test default. For HNSW/PQ, sweep EF
-            ef_list = [50] if mode == 'flat' else [20, 50, 100]
+            # Adjust EF search for modes that support it
+            ef_list = [50] 
+            if mode in ['hnsw', 'ivf', 'auto']: # Auto might choose HNSW/IVF
+                ef_list = [20, 50, 100]
+
             search_perf = {}
             
             for ef in ef_list:
                 if hasattr(db, "set_ef_search"):
-                    db.set_ef_search(ef)
+                    # Only HNSW/IVF usually respect this, others might ignore
+                    try:
+                        db.set_ef_search(ef)
+                    except:
+                        pass
                 
                 latencies = []
                 recall_hits = 0
-                total_hits = 100 * 10
+                total_hits = 100 * 10 # 100 queries * k=10
                 
                 # Warmup
                 _ = db.search(query_vecs[0].tolist(), 10)
@@ -230,11 +299,19 @@ def run_benchmark():
                     expected = set(train_ids[i] for i in gt_indices[q_idx])
                     recall_hits += len(found & expected)
                 
+                recall_pct = (recall_hits / total_hits) * 100
+                p99 = np.percentile(latencies, 99)
+                p50 = np.median(latencies)
+                
                 search_perf[f"ef_{ef}"] = {
-                    "latency_p99_ms": round(np.percentile(latencies, 99), 3),
-                    "latency_p50_ms": round(np.median(latencies), 3),
-                    "recall_pct": round((recall_hits / total_hits) * 100, 2)
+                    "latency_p99_ms": round(p99, 3),
+                    "latency_p50_ms": round(p50, 3),
+                    "recall_pct": round(recall_pct, 2)
                 }
+                
+                print(f"  {ColorChalk.bold(f'EF={ef}')}: "
+                      f"Recall={ColorChalk.success(f'{recall_pct:.1f}%')} | "
+                      f"P99={ColorChalk.info(f'{p99:.2f}ms')}")
 
             del db
             gc.collect()
@@ -248,13 +325,19 @@ def run_benchmark():
                 "search_performance": search_perf
             }
             
+            print(f"  {ColorChalk.bold('Stats')}: "
+                  f"Ingest={ColorChalk.info(f'{mode_stats['ingestion_rate']:.0f} vec/s')} | "
+                  f"Disk={ColorChalk.warning(f'{disk_usage:.1f} MB')}")
+            
             report["results"][mode] = mode_stats
             
         except AttributeError as e:
-            print(f"  -> SKIPPED (Method not found): {e}")
-            report["results"][mode] = {"error": "method_missing"}
+            print(ColorChalk.warning(f"  -> SKIPPED (Method not found): {e}"))
+            report["results"][mode] = {"error": "method_missing", "details": str(e)}
         except Exception as e:
-            print(f"  -> ERROR: {e}")
+            print(ColorChalk.fail(f"  -> ERROR: {e}"))
+            import traceback
+            traceback.print_exc()
             report["results"][mode] = {"error": str(e)}
 
     # Save
@@ -262,12 +345,12 @@ def run_benchmark():
     with open(filename, "w") as f:
         json.dump(report, f, indent=2)
     
-    print("\n" + "=" * 70)
-    print(f"  BENCHMARK COMPLETE")
-    print(f"  Report Saved: {filename}")
-    print("=" * 70)
-    print("\nTo contribute to SrvDB:")
-    print(f"1. Upload '{filename}' to GitHub Issues.")
+    print("\n" + ColorChalk.h2("=" * 70))
+    print(ColorChalk.h1("  BENCHMARK COMPLETE (v2.0)"))
+    print(f"  Report Saved: {ColorChalk.bold(filename)}")
+    print(ColorChalk.h2("=" * 70))
+    print(ColorChalk.bold("\nTo contribute to SrvDB:"))
+    print(f"1. Upload '{ColorChalk.info(filename)}' to GitHub Issues.")
     print("2. Mention your CPU/RAM specs in the issue description.")
 
 if __name__ == "__main__":

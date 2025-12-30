@@ -1,11 +1,11 @@
 [package]
 name = "srvdb"
-version = "0.1.9"
+version = "0.2.0"
 edition = "2021"
 authors = ["Srinivas Nampalli"]
 description = "Zero-Gravity Embedded Vector Database - Offline-first, RAM-efficient vector search"
-license = "AGPL-3.0"
-repository = "https://github.com/Srinivas26k/svdb"
+license = "AGPL-3.0-only"
+repository = "https://github.com/Srinivas26k/srvdb"
 keywords = ["vector", "database", "embedding", "search", "quantization"]
 categories = ["database", "embedded"]
 

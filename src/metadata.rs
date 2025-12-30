@@ -7,8 +7,8 @@
 
 use anyhow::{Context, Result};
 use redb::{Database, ReadableTableMetadata, TableDefinition};
-use std::path::Path;
 use std::collections::HashMap;
+use std::path::Path;
 
 const METADATA_TABLE: TableDefinition<u64, &str> = TableDefinition::new("metadata");
 const CACHE_SIZE: usize = 1000; // Cache last 1000 accessed items
@@ -22,9 +22,8 @@ pub struct MetadataStore {
 impl MetadataStore {
     pub fn new(db_path: &str) -> Result<Self> {
         let db_file = Path::new(db_path).join("metadata.db");
-        
-        let db = Database::create(db_file)
-            .context("Failed to create metadata.db")?;
+
+        let db = Database::create(db_file).context("Failed to create metadata.db")?;
 
         // Initialize table
         let write_txn = db.begin_write()?;
@@ -77,7 +76,7 @@ impl MetadataStore {
         // Fall back to database
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(METADATA_TABLE)?;
-        
+
         let result = table.get(id)?;
         Ok(result.map(|v| v.value().to_string()))
     }
@@ -86,7 +85,7 @@ impl MetadataStore {
     pub fn get_batch(&self, ids: &[u64]) -> Result<Vec<Option<String>>> {
         let read_txn = self.db.begin_read()?;
         let table = read_txn.open_table(METADATA_TABLE)?;
-        
+
         let mut results = Vec::with_capacity(ids.len());
         for id in ids {
             // Check cache first
@@ -97,7 +96,7 @@ impl MetadataStore {
                 results.push(result.map(|v| v.value().to_string()));
             }
         }
-        
+
         Ok(results)
     }
 
@@ -120,7 +119,8 @@ impl MetadataStore {
             return Ok(());
         }
 
-        let items: Vec<_> = self.write_cache
+        let items: Vec<_> = self
+            .write_cache
             .iter()
             .map(|(id, meta)| (*id, meta.clone()))
             .collect();

@@ -90,7 +90,7 @@ def main():
         # Use first 800 vectors for training codebooks (80% of dataset)
         training_data = vectors[:800]
         print(f"\nInitializing PQ DB (Training with {len(training_data)} vectors)...")
-        db_pq = srvdb.SvDBPython.new_quantized(pq_path, training_data)
+        db_pq = srvdb.SrvDBPython.new_quantized(pq_path, training_data)
         
         print(f"Ingesting {n_vectors} vectors into PQ DB...")
         db_pq.add(ids, vectors, metadatas)
@@ -104,7 +104,7 @@ def main():
         # ---------------------------------------------------------
         fp_path = os.path.join(temp_dir, "full")
         print(f"\nInitializing Full Precision DB...")
-        db_full = srvdb.SvDBPython(fp_path)
+        db_full = srvdb.SrvDBPython(fp_path)
         
         print(f"Ingesting {n_vectors} vectors into Full Precision DB...")
         db_full.add(ids, vectors, metadatas)
