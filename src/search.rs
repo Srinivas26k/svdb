@@ -238,30 +238,35 @@ mod tests {
     #[test]
     fn test_batch_search() {
         let temp_dir = TempDir::new().unwrap();
-        let mut storage = VectorStorage::new(temp_dir.path().to_str().unwrap()).unwrap();
+        let mut storage = VectorStorage::new(temp_dir.path().to_str().unwrap(), 1536).unwrap();
 
         // Add test vectors
-        let vectors: Vec<EmbeddedVector> = (0..1000)
+        let vectors: Vec<Vec<f32>> = (0..1000)
             .map(|i| {
-                let mut v = [0.0f32; 1536];
+                let mut v = vec![0.0f32; 1536];
                 v[0] = (i as f32) / 1000.0;
                 v
             })
             .collect();
 
+        // Convert to slice of slices for append_batch
+        // Note: append_batch expects &[Vec<f32>]
         storage.append_batch(&vectors).unwrap();
         storage.flush().unwrap();
 
         // Create multiple queries
-        let queries: Vec<EmbeddedVector> = (0..10)
+        let queries: Vec<Vec<f32>> = (0..10)
             .map(|i| {
-                let mut v = [0.0f32; 1536];
+                let mut v = vec![0.0f32; 1536];
                 v[0] = (i as f32) / 10.0;
                 v
             })
             .collect();
 
-        let results = search_batch(&storage, &queries, 5).unwrap();
+        // Convert queries to required format
+        let query_slices: Vec<Vec<f32>> = queries.clone();
+
+        let results = search_batch(&storage, &query_slices, 5).unwrap();
         assert_eq!(results.len(), 10);
         assert!(results.iter().all(|r| r.len() == 5));
     }

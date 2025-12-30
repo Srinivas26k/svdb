@@ -50,6 +50,7 @@ pub trait VectorEngine {
 pub struct SvDB {
     pub(crate) vector_storage: Option<VectorStorage>,
     pub(crate) quantized_storage: Option<QuantizedVectorStorage>,
+    pub(crate) scalar_storage: Option<storage::ScalarQuantizedStorage>,
     pub(crate) metadata_store: MetadataStore,
     pub(crate) config: types::QuantizationConfig,
     pub(crate) hnsw_index: Option<hnsw::HNSWIndex>,
@@ -68,6 +69,7 @@ impl VectorEngine for SvDB {
         Ok(Self {
             vector_storage: Some(vector_storage),
             quantized_storage: None,
+            scalar_storage: None,
             metadata_store,
             config: types::QuantizationConfig::default(),
             hnsw_index: None,
@@ -76,7 +78,9 @@ impl VectorEngine for SvDB {
     }
 
     fn add(&mut self, vec: &Vector, meta: &str) -> Result<u64> {
-        let id = if self.config.enabled {
+        let id = if let Some(ref mut scalar) = self.scalar_storage {
+            scalar.append(&vec.data)?
+        } else if self.config.enabled {
             if let Some(ref mut qstorage) = self.quantized_storage {
                 qstorage.append(&vec.data)?
             } else {
@@ -92,28 +96,8 @@ impl VectorEngine for SvDB {
         
         // Insert into HNSW graph if enabled
         if let Some(ref hnsw) = self.hnsw_index {
-            // Distance function depends on storage mode
-            if self.config.enabled {
-                // Quantized mode: use PQ distance
-                if let Some(ref qstorage) = self.quantized_storage {
-                    let distance_fn = |a_id: u64, b_id: u64| -> f32 {
-                        if let (Some(qa), Some(qb)) = (qstorage.get(a_id), qstorage.get(b_id)) {
-                            // Approximate distance using PQ
-                            // For now, use simple L2 on codes as placeholder
-                            let dist: f32 = qa.iter()
-                                .zip(qb.iter())
-                                .map(|(a, b)| (*a as f32 - *b as f32).powi(2))
-                                .sum::<f32>()
-                                .sqrt();
-                            dist
-                        } else {
-                            f32::MAX
-                        }
-                    };
-                    hnsw.insert(id, &distance_fn)?;
-                }
-            } else {
-                // Full precision mode: use cosine similarity
+            // Only support HNSW for non-quantized storage for now
+            if self.scalar_storage.is_none() && !self.config.enabled {
                 if let Some(ref vstorage) = self.vector_storage {
                     let distance_fn = |a_id: u64, b_id: u64| -> f32 {
                         if let (Some(a), Some(b)) = (vstorage.get(a_id), vstorage.get(b_id)) {
@@ -143,7 +127,9 @@ impl VectorEngine for SvDB {
             .collect();
 
         // Batch append vectors based on mode
-        let ids = if self.config.enabled {
+        let ids = if let Some(ref mut scalar) = self.scalar_storage {
+            scalar.append_batch(&embedded)?
+        } else if self.config.enabled {
             if let Some(ref mut qstorage) = self.quantized_storage {
                 qstorage.append_batch(&embedded)?
             } else {
@@ -183,7 +169,9 @@ impl VectorEngine for SvDB {
             }
         } else {
             // Flat search (O(n)) - backward compatible
-            if self.config.enabled {
+            if let Some(ref scalar) = self.scalar_storage {
+                scalar.search(&query.data, k)?
+            } else if self.config.enabled {
                 if let Some(ref qstorage) = self.quantized_storage {
                     search::search_quantized(qstorage, &query.data, k)?
                 } else {
@@ -213,7 +201,14 @@ impl VectorEngine for SvDB {
             .map(|q| q.data.clone())
             .collect();
         
-        let batch_results = if self.config.enabled {
+        let batch_results = if let Some(ref scalar) = self.scalar_storage {
+            // SQ8 lacks a dedicated batch search for now, use loop
+             let mut results = Vec::with_capacity(queries.len());
+             for query in embedded_queries {
+                 results.push(scalar.search(&query, k)?);
+             }
+             results
+        } else if self.config.enabled {
             if let Some(ref qstorage) = self.quantized_storage {
                 search::search_quantized_batch(qstorage, &embedded_queries, k)?
             } else {
@@ -253,15 +248,22 @@ impl VectorEngine for SvDB {
         if let Some(ref mut qstorage) = self.quantized_storage {
             qstorage.flush()?;
         }
+        if let Some(ref mut scalar) = self.scalar_storage {
+            scalar.flush()?;
+        }
         self.metadata_store.flush()?;
         Ok(())
     }
 
     fn count(&self) -> u64 {
-        if self.config.enabled {
-            self.quantized_storage.as_ref().map(|s| s.count()).unwrap_or(0)
+        if let Some(ref scalar) = self.scalar_storage {
+            scalar.count()
+        } else if let Some(ref qstorage) = self.quantized_storage {
+            qstorage.count()
+        } else if let Some(ref vstorage) = self.vector_storage {
+            vstorage.count()
         } else {
-            self.vector_storage.as_ref().map(|s| s.count()).unwrap_or(0)
+            0
         }
     }
 }
@@ -280,6 +282,7 @@ impl SvDB {
         Ok(Self {
             vector_storage: Some(vector_storage),
             quantized_storage: None,
+            scalar_storage: None,
             metadata_store,
             config: config.quantization,
             hnsw_index: None,
@@ -315,6 +318,7 @@ let _dimension = training_vectors[0].data.len();
         Ok(Self {
             vector_storage: None,
             quantized_storage: Some(quantized_storage),
+            scalar_storage: None,
             metadata_store,
             config,
             hnsw_index: None,
@@ -331,22 +335,23 @@ let _dimension = training_vectors[0].data.len();
             anyhow::bail!("Training vectors required for scalar quantization");
         }
 
-        let _sq_storage = crate::storage::ScalarQuantizedStorage::new_with_training(
+        let scalar_storage = crate::storage::ScalarQuantizedStorage::new_with_training(
             path,
             dimension,
             training_vectors,
         )?;
+        
         let metadata_store = MetadataStore::new(path)?;
-
-        // For now, store using unquantized storage for compatibility
-        // TODO: Integrate SQ8 fully with main database structure
-        let vector_storage = VectorStorage::new(path, dimension)?;
+        let mut config = types::QuantizationConfig::default();
+        config.enabled = true;
+        config.mode = types::QuantizationMode::Scalar;
 
         Ok(Self {
-            vector_storage: Some(vector_storage),
+            vector_storage: None, // Disable full precision storage!
             quantized_storage: None,
+            scalar_storage: Some(scalar_storage),
             metadata_store,
-            config: types::QuantizationConfig::default(),
+            config,
             hnsw_index: None,
             hnsw_config: None,
         })
@@ -379,6 +384,7 @@ let _dimension = training_vectors[0].data.len();
         Ok(Self {
             vector_storage: Some(vector_storage),
             quantized_storage: None,
+            scalar_storage: None,
             metadata_store,
             config: types::QuantizationConfig::default(),
             hnsw_index: Some(hnsw_index),
@@ -432,6 +438,7 @@ let _dimension = training_vectors[0].data.len();
         Ok(Self {
             vector_storage: None,
             quantized_storage: Some(quantized_storage),
+            scalar_storage: None,
             metadata_store,
             config,
             hnsw_index: Some(hnsw_index),

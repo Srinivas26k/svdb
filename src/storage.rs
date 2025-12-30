@@ -253,10 +253,20 @@ impl DynamicVectorStorage {
     }
 }
 
-/// Scalar Quantized Storage (SQ8) - 4x compression
+/// Scalar Quantized Storage (SQ8) - 4x compression with direct u8 storage
 pub struct ScalarQuantizedStorage {
-    storage: DynamicVectorStorage,
+    writer: BufWriter<File>,
+    mmap: Option<MmapMut>,
+    count: AtomicU64,
+    dimension: usize,
     quantizer: crate::types::ScalarQuantizer,
+    last_flushed_count: u64,
+}
+
+impl Drop for ScalarQuantizedStorage {
+    fn drop(&mut self) {
+        let _ = self.flush();
+    }
 }
 
 impl ScalarQuantizedStorage {
@@ -278,11 +288,66 @@ impl ScalarQuantizedStorage {
         let quantizer_bytes = bincode::serialize(&quantizer)?;
         std::fs::write(quantizer_path, quantizer_bytes)?;
 
-        // Note: For SQ8, we store uint8 vectors (dimension bytes per vector)
-        // But we use DynamicVectorStorage with dimension for the original storage
-        let storage = DynamicVectorStorage::new(db_path, dimension)?;
+        // Create quantized vectors file
+        let file_path = Path::new(db_path).join("sq8_vectors.bin");
+        let exists = file_path.exists();
+        
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&file_path)
+            .context("Failed to open sq8_vectors.bin")?;
 
-        Ok(Self { storage, quantizer })
+        let mut count = 0;
+
+        if exists {
+            // Read existing header
+            if file.metadata()?.len() >= VectorHeader::SIZE as u64 {
+                let mmap = unsafe { MmapOptions::new().map(&file)? };
+                let header = unsafe { &*(mmap.as_ptr() as *const VectorHeader) };
+                header.validate()?;
+                count = header.count;
+                
+                // Validate dimension
+                if header.dimension as usize != dimension {
+                    anyhow::bail!(
+                        "Dimension mismatch: expected {}, found {}",
+                        dimension, header.dimension
+                    );
+                }
+            }
+            file.seek(SeekFrom::End(0))?;
+        } else {
+            // Write new header with SQ8 marker
+            let mut header = VectorHeader::new(dimension)?;
+            header.quantization_mode = 1; // SQ8 = 1
+            let header_bytes = unsafe {
+                std::slice::from_raw_parts(
+                    &header as *const VectorHeader as *const u8,
+                    VectorHeader::SIZE,
+                )
+            };
+            file.write_all(header_bytes)?;
+            file.sync_all()?;
+        }
+
+        let writer = BufWriter::with_capacity(BUFFER_SIZE, file);
+        let file_ref = writer.get_ref();
+        let mmap = if file_ref.metadata()?.len() > VectorHeader::SIZE as u64 {
+            Some(unsafe { MmapOptions::new().map_mut(file_ref)? })
+        } else {
+            None
+        };
+
+        Ok(Self {
+            writer,
+            mmap,
+            count: AtomicU64::new(count),
+            dimension,
+            quantizer,
+            last_flushed_count: count,
+        })
     }
 
     /// Load existing SQ8 storage
@@ -291,40 +356,107 @@ impl ScalarQuantizedStorage {
         let quantizer_bytes = std::fs::read(quantizer_path)?;
         let quantizer = bincode::deserialize(&quantizer_bytes)?;
 
-        let storage = DynamicVectorStorage::new(db_path, dimension)?;
+        let file_path = Path::new(db_path).join("sq8_vectors.bin");
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&file_path)?;
 
-        Ok(Self { storage, quantizer })
+        let mut count = 0;
+        if file.metadata()?.len() >= VectorHeader::SIZE as u64 {
+            let mmap = unsafe { MmapOptions::new().map(&file)? };
+            let header = unsafe { &*(mmap.as_ptr() as *const VectorHeader) };
+            header.validate()?;
+            count = header.count;
+        }
+
+        file.seek(SeekFrom::End(0))?;
+        let writer = BufWriter::with_capacity(BUFFER_SIZE, file);
+        let file_ref = writer.get_ref();
+        let mmap = if file_ref.metadata()?.len() > VectorHeader::SIZE as u64 {
+            Some(unsafe { MmapOptions::new().map_mut(file_ref)? })
+        } else {
+            None
+        };
+
+        Ok(Self {
+            writer,
+            mmap,
+            count: AtomicU64::new(count),
+            dimension,
+            quantizer,
+            last_flushed_count: count,
+        })
     }
 
-    /// Append vector (automatically quantizes)
+    /// Append vector (automatically quantizes to u8)
     pub fn append(&mut self, vector: &[f32]) -> Result<u64> {
+        if vector.len() != self.dimension {
+            anyhow::bail!(
+                "Vector dimension {} doesn't match expected {}",
+                vector.len(),
+                self.dimension
+            );
+        }
+
+        let id = self.count.fetch_add(1, Ordering::Relaxed);
+        
+        // Quantize to u8 (1 byte per dimension)
         let encoded = self.quantizer.encode(vector);
         
-        // Convert u8 to f32 for storage (temporary - will optimize later)
-        let encoded_f32: Vec<f32> = encoded.iter().map(|&x| x as f32).collect();
-        self.storage.append(&encoded_f32)
+        // Write u8 bytes directly (TRUE compression!)
+        self.writer.write_all(&encoded)?;
+        
+        if self.writer.buffer().len() > (BUFFER_SIZE * 9 / 10) {
+            self.flush()?;
+        }
+
+        Ok(id)
     }
 
-    /// Get and decode vector
+    /// Append batch of vectors
+    pub fn append_batch(&mut self, vectors: &[Vec<f32>]) -> Result<Vec<u64>> {
+        let mut ids = Vec::with_capacity(vectors.len());
+        for vector in vectors {
+            ids.push(self.append(vector)?);
+        }
+        Ok(ids)
+    }
+
+    /// Get and decode vector from u8 storage
     pub fn get(&self, index: u64) -> Option<Vec<f32>> {
-        let encoded_f32 = self.storage.get(index)?;
-        let encoded: Vec<u8> = encoded_f32.iter().map(|&x| x as u8).collect();
-        Some(self.quantizer.decode(&encoded))
+        let mmap = self.mmap.as_ref()?;
+        
+        if index >= self.count.load(Ordering::Relaxed) {
+            return None;
+        }
+
+        // Calculate offset: header + (index * dimension bytes for u8)
+        let offset = VectorHeader::SIZE + (index as usize * self.dimension);
+        
+        if offset + self.dimension <= mmap.len() {
+            let encoded = &mmap[offset..offset + self.dimension];
+            Some(self.quantizer.decode(encoded))
+        } else {
+            None
+        }
     }
 
     /// Asymmetric search: compare full query to quantized vectors
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<(u64, f32)>> {
-        let count = self.storage.count() as usize;
+        let count = self.count.load(Ordering::Relaxed) as usize;
         if count == 0 {
             return Ok(Vec::new());
         }
 
         let mut results = Vec::with_capacity(count);
+        let mmap = self.mmap.as_ref().context("No mmap available")?;
         
         for i in 0..count {
-            if let Some(encoded_f32) = self.storage.get(i as u64) {
-                let encoded: Vec<u8> = encoded_f32.iter().map(|&x| x as u8).collect();
-                let score = self.quantizer.asymmetric_distance(query, &encoded);
+            let offset = VectorHeader::SIZE + (i * self.dimension);
+            if offset + self.dimension <= mmap.len() {
+                let encoded = &mmap[offset..offset + self.dimension];
+                let score = self.quantizer.asymmetric_distance(query, encoded);
                 results.push((i as u64, score));
             }
         }
@@ -337,11 +469,41 @@ impl ScalarQuantizedStorage {
     }
 
     pub fn count(&self) -> u64 {
-        self.storage.count()
+        self.count.load(Ordering::Relaxed)
     }
 
     pub fn flush(&mut self) -> Result<()> {
-        self.storage.flush()
+        self.writer.flush()?;
+        
+        // Update header count
+        let current_count = self.count.load(Ordering::Relaxed);
+        if current_count != self.last_flushed_count {
+            {
+                let file = self.writer.get_mut();
+                file.seek(SeekFrom::Start(0))?;
+                
+                let mut header = VectorHeader::new(self.dimension)?;
+                header.count = current_count;
+                header.quantization_mode = 1; // SQ8 = 1
+                
+                let header_bytes = unsafe {
+                    std::slice::from_raw_parts(
+                        &header as *const VectorHeader as *const u8,
+                        VectorHeader::SIZE,
+                    )
+                };
+                file.write_all(header_bytes)?;
+                file.sync_all()?;
+                file.seek(SeekFrom::End(0))?;
+            }  // Drop mutable borrow here
+            
+            // Now we can remap
+            let file_ref = self.writer.get_ref();
+            self.mmap = Some(unsafe { MmapOptions::new().map_mut(file_ref)? });
+            self.last_flushed_count = current_count;
+        }
+        
+        Ok(())
     }
 }
 
@@ -433,5 +595,11 @@ mod tests {
         
         // Should have low reconstruction error
         assert!(error < 0.5);
+        
+        // Verify disk compression: 256 bytes (u8) vs 1024 bytes (f32)
+        let sq8_file = temp_dir.path().join("sq8_vectors.bin");
+        let file_size = std::fs::metadata(sq8_file).unwrap().len();
+        // Header (64) + 256 bytes for quantized vector
+        assert_eq!(file_size, VectorHeader::SIZE as u64 + 256);
     }
 }

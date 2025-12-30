@@ -321,13 +321,16 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         
         // Create training data
-        let training: Vec<EmbeddedVector> = (0..100)
+        let training: Vec<Vec<f32>> = (0..100)
             .map(|i| {
-                let mut v = [0.0f32; 1536];
+                let mut v = vec![0.0f32; 1536];
                 v[0] = i as f32 / 100.0;
                 v
             })
             .collect();
+
+        // Convert training data to reference slice
+        // let training_refs: Vec<&[f32]> = training.iter().map(|v| v.as_slice()).collect();
 
         let mut storage = QuantizedVectorStorage::new_with_training(
             temp_dir.path().to_str().unwrap(),
@@ -335,7 +338,7 @@ mod tests {
         ).unwrap();
 
         // Test append
-        let test_vec = [0.5f32; 1536];
+        let test_vec = vec![0.5f32; 1536];
         let id = storage.append(&test_vec).unwrap();
         assert_eq!(id, 0);
 
