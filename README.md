@@ -91,8 +91,8 @@ maturin develop --release
 import srvdb
 import numpy as np
 
-# Initialize database
-db = srvdb.SrvDBPython("./vectors")
+# Initialize database (Default: 1536-dim, Flat mode)
+db = srvdb.SrvDBPython("./vectors", dimension=1536, mode="flat")
 
 # Bulk insert
 ids = [f"doc_{i}" for i in range(10000)]
@@ -229,32 +229,37 @@ db.add(
 
 ### Initialization
 
+### Initialization
+
 ```python
-# Flat mode (default)
-db = srvdb.SrvDBPython(path: str)
+# Standard Initialization
+# modes: 'flat', 'hnsw', 'sq8', 'pq', 'ivf', 'auto'
+db = srvdb.SrvDBPython(path="db_path", dimension=1536, mode="flat")
 
-# HNSW mode
-db = srvdb.SrvDBPython.new_with_hnsw(
-    path: str,
-    m: int = 16,
-    ef_construction: int = 200,
-    ef_search: int = 50
+# HNSW Mode with Custom Parameters
+db = srvdb.SrvDBPython.new_hnsw(
+    path="db_hnsw",
+    dimension=1536,
+    m=16,
+    ef_construction=200,
+    ef_search=50
 )
 
-# HNSW + PQ mode
-db = srvdb.SrvDBPython.new_with_hnsw_quantized(
-    path: str,
-    training_vectors: List[List[float]],
-    m: int = 16,
-    ef_construction: int = 200,
-    ef_search: int = 50
+# Scalar Quantization (SQ8) - Requires training data
+# 4x compression, good for large datasets on disk
+db = srvdb.SrvDBPython.new_scalar_quantized(
+    path="db_sq8",
+    dimension=1536,
+    training_vectors=vectors_list # List[List[float]]
 )
 
-# IVF-HNSW mode
-db = srvdb.SrvDBPython(path: str)
-db.set_mode("ivf")
-db.configure_ivf(nlist=1024, nprobe=16)
-db.train_ivf(ids, vectors)
+# Product Quantization (PQ) - Requires training data
+# 32x compression, optimized for edge/low-memory
+db = srvdb.SrvDBPython.new_product_quantized(
+    path="db_pq",
+    dimension=1536,
+    training_vectors=vectors_list
+)
 ```
 
 ### Operations
@@ -292,10 +297,9 @@ db.count() -> int
 db.persist() -> None
 
 # IVF specific training
-db.train_ivf(
-    ids: List[str],
-    vectors: List[List[float]]
-) -> None
+# Switch to IVF mode first: db.set_mode("ivf")
+db.configure_ivf(nlist=100, nprobe=10)
+db.train_ivf() # Uses existing data in DB to train
 ```
 
 ---
