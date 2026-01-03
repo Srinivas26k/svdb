@@ -3,6 +3,10 @@
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-AGPL-red.svg)](LICENSE)
+[![Documentation](https://img.shields.io/badge/docs-available-brightgreen.svg)](docs/index.md)
+
+**[📚 Read the Full Documentation](docs/index.md)**
+
 
 SrvDB is a Rust-based embedded vector database designed for offline and edge AI deployments. It provides exact nearest neighbor search with a focus on simplicity, deterministic behavior, and zero external dependencies.
 

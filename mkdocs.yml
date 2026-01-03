@@ -1,0 +1,46 @@
+site_name: SrvDB Documentation
+site_url: https://srinivas26k.github.io/srvdb/
+site_description: High-performance embedded vector database for Rust and Python.
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: teal
+      accent: purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: teal
+      accent: lime
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: install.md
+    - Quickstart: quickstart.md
+  - Guides:
+    - Migration Guide: guides/migration.md
+    - Performance Tuning: guides/optimization_tuning.md
+    - Benchmarking: guides/benchmarking.md
+  - Concepts:
+    - Indexing Modes: concepts/modes.md
+  - Technical Reports:
+    - GLM Benchmark: reports/glm_benchmark.md
+    - Qwen Benchmark: reports/qwen_benchmark.md
+  - API Reference:
+    - Python API: api/python.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
